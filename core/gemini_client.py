@@ -4,11 +4,14 @@ Uses Imagen 4 via google.genai
 """
 
 import os
-import requests
 import base64
-from typing import Optional
+from typing import Optional, List
 from google import genai
 from google.genai import types
+
+from core.config import ModelConfig, ResolutionConfig, GenerationConfig
+from core.prompt_builder import ImagePromptBuilder
+from core.image_utils import save_base64_image
 
 
 class GeminiClient:
@@ -26,14 +29,14 @@ class GeminiClient:
             raise ValueError("GEMINI_API_KEY not set, please check .env file")
 
         self.client = genai.Client(api_key=self.api_key)
-        self.model = "imagen-4.0-generate-001"  # Working model
+        self.model = ModelConfig.GEMINI_IMAGE_MODEL
 
     def generate_image(
         self,
         prompt: str,
-        aspect_ratio: str = "16:9",
-        resolution: str = "2K",
-        style: str = "realistic"
+        aspect_ratio: str = GenerationConfig.DEFAULT_ASPECT_RATIO,
+        resolution: str = GenerationConfig.DEFAULT_RESOLUTION,
+        style: str = GenerationConfig.DEFAULT_STYLE
     ) -> str:
         """
         Generate image using Gemini Imagen API
@@ -47,7 +50,9 @@ class GeminiClient:
         Returns:
             Image base64 data
         """
-        full_prompt = self._build_prompt(prompt, aspect_ratio, resolution, style)
+        full_prompt = ImagePromptBuilder.build_prompt(
+            prompt, aspect_ratio, resolution, style
+        )
 
         try:
             response = self.client.models.generate_images(
@@ -76,29 +81,13 @@ class GeminiClient:
         except Exception as e:
             raise RuntimeError(f"Gemini image generation failed: {str(e)}")
 
-    def _build_prompt(
-        self,
-        base_prompt: str,
-        aspect_ratio: str,
-        resolution: str,
-        style: str
-    ) -> str:
-        """Build full generation prompt"""
-        return f"""Professional presentation slide: {base_prompt}
-
-Style: {style}
-Aspect Ratio: {aspect_ratio}
-Resolution: {resolution}
-
-Quality: High resolution, professional design, clean layout, suitable for business presentation.
-Clean, modern, minimalist design with good typography and visual hierarchy."""
 
     def generate_slides(
         self,
-        prompts: list[str],
-        resolution: str = "2K",
-        style: str = "realistic"
-    ) -> list[str]:
+        prompts: List[str],
+        resolution: str = GenerationConfig.DEFAULT_RESOLUTION,
+        style: str = GenerationConfig.DEFAULT_STYLE
+    ) -> List[Optional[str]]:
         """
         Batch generate multiple slide images
 
@@ -122,24 +111,3 @@ Clean, modern, minimalist design with good typography and visual hierarchy."""
 
         return images
 
-    def save_image(self, image_base64: str, filepath: str) -> None:
-        """
-        Save image to file
-
-        Args:
-            image_base64: Base64 image data
-            filepath: Save path
-        """
-        try:
-            # Remove data URL prefix if present
-            if ',' in image_base64:
-                image_base64 = image_base64.split(',', 1)[1]
-
-            image_data = base64.b64decode(image_base64)
-            with open(filepath, "wb") as f:
-                f.write(image_data)
-
-            print(f"[SAVE] Image saved: {filepath}")
-
-        except Exception as e:
-            print(f"[ERROR] Failed to save image: {str(e)}")

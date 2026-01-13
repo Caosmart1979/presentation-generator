@@ -8,6 +8,9 @@ import base64
 from typing import Optional, List
 from openai import OpenAI
 
+from core.config import ModelConfig, ResolutionConfig, GenerationConfig
+from core.prompt_builder import ImagePromptBuilder
+
 
 class OpenRouterClient:
     """OpenRouter API Client for PPT image generation (3rd fallback)"""
@@ -28,7 +31,7 @@ class OpenRouterClient:
                 base_url="https://openrouter.ai/api/v1",
                 api_key=self.api_key
             )
-            self.model = "google/gemini-3-pro-image-preview"  # Default model
+            self.model = ModelConfig.OPENROUTER_IMAGE_MODEL
 
     # ========================================
     # Image Generation
@@ -38,7 +41,7 @@ class OpenRouterClient:
         self,
         prompt: str,
         model: str = None,
-        size: str = "1344x768"
+        size: str = None
     ) -> Optional[str]:
         """
         Generate image using OpenRouter
@@ -57,7 +60,10 @@ class OpenRouterClient:
         if model is None:
             model = self.model
 
-        full_prompt = self._build_image_prompt(prompt)
+        if size is None:
+            size = ResolutionConfig.DEFAULT_SIZE
+
+        full_prompt = ImagePromptBuilder.build_simple_prompt(prompt)
 
         try:
             response = self.client.responses.create(
@@ -84,9 +90,9 @@ class OpenRouterClient:
     def generate_images(
         self,
         prompts: List[str],
-        resolution: str = "2K",
-        style: str = "realistic",
-        aspect_ratio: str = "16:9"
+        resolution: str = GenerationConfig.DEFAULT_RESOLUTION,
+        style: str = GenerationConfig.DEFAULT_STYLE,
+        aspect_ratio: str = GenerationConfig.DEFAULT_ASPECT_RATIO
     ) -> List[Optional[str]]:
         """
         Batch generate images using OpenRouter
@@ -101,7 +107,7 @@ class OpenRouterClient:
             Base64 image data list
         """
         images = []
-        size = self._get_image_size(aspect_ratio, resolution)
+        size = ResolutionConfig.get_size(aspect_ratio, resolution)
 
         for i, prompt in enumerate(prompts):
             print(f"[OPENROUTER] Generating slide {i+1}/{len(prompts)}...")
@@ -113,7 +119,7 @@ class OpenRouterClient:
                         {
                             "role": "user",
                             "content": [
-                                {"type": "text", "text": self._build_image_prompt(prompt)}
+                                {"type": "text", "text": ImagePromptBuilder.build_simple_prompt(prompt, style)}
                             ]
                         }
                     ],
@@ -135,32 +141,6 @@ class OpenRouterClient:
 
         return images
 
-    def _build_image_prompt(self, base_prompt: str) -> str:
-        """Build image generation prompt for OpenRouter"""
-        return f"""Professional presentation slide: {base_prompt}
-
-Create a high-quality, professional presentation slide with:
-- Clean, modern design
-- Excellent composition and balance
-- Clear visual hierarchy
-- Professional color scheme
-- Suitable for business presentation
-- 16:9 aspect ratio
-
-Quality: High resolution, professional design, clean layout."""
-
-    def _get_image_size(self, aspect_ratio: str, resolution: str) -> str:
-        """Map aspect ratio and resolution to size"""
-        size_map = {
-            ("16:9", "2K"): "1344x768",
-            ("16:9", "1080p"): "1024x576",
-            ("16:9", "4K"): "2048x1152",
-            ("4:3", "2K"): "1024x768",
-            ("4:3", "1080p"): "768x576",
-            ("1:1", "2K"): "768x768",
-            ("1:1", "1080p"): "512x512",
-        }
-        return size_map.get((aspect_ratio, resolution), "1344x768")
 
     def _extract_image_from_response(self, response) -> Optional[str]:
         """Extract image data from OpenRouter response"""

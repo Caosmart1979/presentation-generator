@@ -14,6 +14,8 @@ from core.gemini_client import GeminiClient
 from core.glm_client import GLMClient
 from core.openrouter_client import OpenRouterClient
 from core.style_manager import StyleManager
+from core.config import ResolutionConfig
+from core.image_utils import save_base64_image
 from generators.prompt_generator import PromptGenerator
 
 
@@ -117,7 +119,7 @@ class PPTGenerator:
             if image_data:
                 filename = f"slide_{i+1:02d}_{slides_plan['slides'][i]['page_type']}.png"
                 filepath = os.path.join(images_dir, filename)
-                self._save_image(image_data, filepath)
+                save_base64_image(image_data, filepath)
                 image_paths.append(filepath)
 
         # 6. Generate transitions (optional)
@@ -322,38 +324,12 @@ class PPTGenerator:
         try:
             return self.openrouter_client.generate_image(
                 prompt=prompt,
-                size=self._get_size_for_openrouter(resolution)
+                size=ResolutionConfig.get_size("16:9", resolution)
             )
         except Exception as e:
             print(f"[OPENROUTER] Single image failed: {str(e)}")
             return None
 
-    def _get_size_for_openrouter(self, resolution: str) -> str:
-        """Map resolution to OpenRouter size"""
-        size_map = {
-            "2K": "1344x768",
-            "1080p": "1024x576",
-            "4K": "2048x1152"
-        }
-        return size_map.get(resolution, "1344x768")
-
-    def _save_image(self, image_base64: str, filepath: str) -> None:
-        """Save image to file (unified for both GLM and Gemini)"""
-        import base64
-
-        try:
-            # Remove data URL prefix if present
-            if ',' in image_base64:
-                image_base64 = image_base64.split(',', 1)[1]
-
-            image_data = base64.b64decode(image_base64)
-            with open(filepath, "wb") as f:
-                f.write(image_data)
-
-            print(f"[SAVE] {filepath}")
-
-        except Exception as e:
-            print(f"[ERROR] Failed to save {filepath}: {str(e)}")
 
     def _generate_slides_plan(self, content: str, page_count: int) -> Dict[str, Any]:
         """Generate content plan"""
