@@ -16,6 +16,7 @@ from core.openrouter_client import OpenRouterClient
 from core.style_manager import StyleManager
 from core.config import ResolutionConfig
 from core.image_utils import save_base64_image
+from core.generation_chain import ImageGenerationChain
 from generators.prompt_generator import PromptGenerator
 
 
@@ -41,6 +42,13 @@ class PPTGenerator:
         self.openrouter_client = OpenRouterClient(openrouter_api_key)
         self.style_manager = StyleManager()
         self.prompt_generator = PromptGenerator()
+
+        # Create generation chain (GLM -> Gemini -> OpenRouter)
+        self.generation_chain = ImageGenerationChain([
+            self.glm_client,
+            self.gemini_client,
+            self.openrouter_client
+        ])
 
     def generate(
         self,
@@ -103,11 +111,12 @@ class PPTGenerator:
         with open(prompts_path, 'w', encoding='utf-8') as f:
             json.dump(prompts, f, ensure_ascii=False, indent=2)
 
-        # 5. Generate images with fallback
+        # 5. Generate images with fallback chain
         print(f"\n[IMAGE] Generating images...")
-        print(f"       Strategy: GLM-4V (primary) -> Gemini (fallback)")
+        available_clients = self.generation_chain.get_available_clients()
+        print(f"       Strategy: {' -> '.join(available_clients)}")
 
-        images = self._generate_images_with_fallback(
+        images = self.generation_chain.generate_images(
             prompts=prompts,
             resolution=resolution,
             style=style
@@ -177,158 +186,6 @@ class PPTGenerator:
 
         return result
 
-    def _generate_images_with_fallback(
-        self,
-        prompts: List[str],
-        resolution: str,
-        style: str
-    ) -> List[Optional[str]]:
-        """
-        Generate images with 3-level fallback:
-        1. GLM-4V (primary)
-        2. Gemini Imagen 4.0 (secondary)
-        3. OpenRouter (tertiary)
-
-        Args:
-            prompts: Image prompt list
-            resolution: Resolution
-            style: Style
-
-        Returns:
-            Image data list (base64)
-        """
-        # Level 1: Try GLM-4V first
-        if self.glm_client.client:
-            print(f"[IMAGE] Level 1: Trying GLM-4V (CogView-3)...")
-            glm_images = self.glm_client.generate_images(
-                prompts=prompts,
-                resolution=resolution,
-                style=style
-            )
-
-            glm_success_count = sum(1 for img in glm_images if img is not None)
-            print(f"[GLM] Generated: {glm_success_count}/{len(prompts)} images")
-
-            if glm_success_count == len(prompts):
-                print(f"[GLM] All images generated successfully!")
-                return glm_images
-            elif glm_success_count > 0:
-                print(f"[GLM] Partial success, filling gaps...")
-                return self._fill_gaps_with_fallback(prompts, glm_images, resolution, style)
-            else:
-                print(f"[GLM] All failed, falling back to Level 2...")
-                # Fall back to Level 2
-                return self._try_level_2_fallback(prompts, resolution, style)
-
-        # No GLM client, go directly to Level 2
-        return self._try_level_2_fallback(prompts, resolution, style)
-
-    def _try_level_2_fallback(
-        self,
-        prompts: List[str],
-        resolution: str,
-        style: str
-    ) -> List[Optional[str]]:
-        """Level 2: Try Gemini Imagen 4.0"""
-        try:
-            print(f"[IMAGE] Level 2: Trying Gemini (Imagen 4.0)...")
-            gemini_images = self.gemini_client.generate_slides(
-                prompts=prompts,
-                resolution=resolution,
-                style=style
-            )
-
-            gemini_success_count = sum(1 for img in gemini_images if img is not None)
-            print(f"[GEMINI] Generated: {gemini_success_count}/{len(prompts)} images")
-
-            if gemini_success_count == len(prompts):
-                print(f"[GEMINI] All images generated successfully!")
-                return gemini_images
-            elif gemini_success_count > 0:
-                print(f"[GEMINI] Partial success, filling gaps with Level 3...")
-                return self._fill_gaps_with_openrouter(prompts, gemini_images, resolution, style)
-            else:
-                print(f"[GEMINI] All failed, falling back to Level 3...")
-                return self._try_level_3_fallback(prompts, resolution, style)
-
-        except Exception as e:
-            print(f"[GEMINI] Level 2 failed: {str(e)}")
-            return self._try_level_3_fallback(prompts, resolution, style)
-
-    def _try_level_3_fallback(
-        self,
-        prompts: List[str],
-        resolution: str,
-        style: str
-    ) -> List[Optional[str]]:
-        """Level 3: Try OpenRouter (final fallback)"""
-        if self.openrouter_client.client:
-            print(f"[IMAGE] Level 3: Trying OpenRouter (FLUX/Gemini-3)...")
-            return self.openrouter_client.generate_images(
-                prompts=prompts,
-                resolution=resolution,
-                style=style
-            )
-        else:
-            print(f"[OPENROUTER] No client available, all levels failed!")
-            return [None] * len(prompts)
-
-    def _fill_gaps_with_fallback(
-        self,
-        prompts: List[str],
-        partial_images: List[Optional[str]],
-        resolution: str,
-        style: str
-    ) -> List[Optional[str]]:
-        """Fill failed images with Level 2 then Level 3"""
-        result = partial_images.copy()
-        for i, img in enumerate(partial_images):
-            if img is None:
-                print(f"[FALLBACK] Filling slide {i+1} (trying Level 2)...")
-                try:
-                    gemini_img = self.gemini_client.generate_image(
-                        prompt=prompts[i],
-                        resolution=resolution,
-                        style=style
-                    )
-                    result[i] = gemini_img
-                except Exception as e:
-                    print(f"[FALLBACK] Level 2 failed for slide {i+1}, trying Level 3...")
-                    result[i] = self._try_single_openrouter(prompts[i], resolution, style)
-        return result
-
-    def _fill_gaps_with_openrouter(
-        self,
-        prompts: List[str],
-        partial_images: List[Optional[str]],
-        resolution: str,
-        style: str
-    ) -> List[Optional[str]]:
-        """Fill failed images with Level 3 (OpenRouter)"""
-        result = partial_images.copy()
-        for i, img in enumerate(partial_images):
-            if img is None:
-                print(f"[FALLBACK] Filling slide {i+1} with OpenRouter...")
-                result[i] = self._try_single_openrouter(prompts[i], resolution, style)
-        return result
-
-    def _try_single_openrouter(
-        self,
-        prompt: str,
-        resolution: str,
-        style: str
-    ) -> Optional[str]:
-        """Try generating single image with OpenRouter"""
-        if not self.openrouter_client.client:
-            return None
-        try:
-            return self.openrouter_client.generate_image(
-                prompt=prompt,
-                size=ResolutionConfig.get_size("16:9", resolution)
-            )
-        except Exception as e:
-            print(f"[OPENROUTER] Single image failed: {str(e)}")
-            return None
 
 
     def _generate_slides_plan(self, content: str, page_count: int) -> Dict[str, Any]:

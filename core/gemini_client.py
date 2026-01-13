@@ -9,12 +9,13 @@ from typing import Optional, List
 from google import genai
 from google.genai import types
 
+from core.base_client import BaseImageClient
 from core.config import ModelConfig, ResolutionConfig, GenerationConfig
 from core.prompt_builder import ImagePromptBuilder
 from core.image_utils import save_base64_image
 
 
-class GeminiClient:
+class GeminiClient(BaseImageClient):
     """Gemini API Client for PPT image generation"""
 
     def __init__(self, api_key: Optional[str] = None):
@@ -24,6 +25,7 @@ class GeminiClient:
         Args:
             api_key: Gemini API key, read from env var if not provided
         """
+        super().__init__(api_key)
         self.api_key = api_key or os.getenv('GEMINI_API_KEY')
         if not self.api_key:
             raise ValueError("GEMINI_API_KEY not set, please check .env file")
@@ -36,8 +38,9 @@ class GeminiClient:
         prompt: str,
         aspect_ratio: str = GenerationConfig.DEFAULT_ASPECT_RATIO,
         resolution: str = GenerationConfig.DEFAULT_RESOLUTION,
-        style: str = GenerationConfig.DEFAULT_STYLE
-    ) -> str:
+        style: str = GenerationConfig.DEFAULT_STYLE,
+        **kwargs
+    ) -> Optional[str]:
         """
         Generate image using Gemini Imagen API
 
@@ -79,35 +82,6 @@ class GeminiClient:
                 raise RuntimeError("No image in response")
 
         except Exception as e:
-            raise RuntimeError(f"Gemini image generation failed: {str(e)}")
-
-
-    def generate_slides(
-        self,
-        prompts: List[str],
-        resolution: str = GenerationConfig.DEFAULT_RESOLUTION,
-        style: str = GenerationConfig.DEFAULT_STYLE
-    ) -> List[Optional[str]]:
-        """
-        Batch generate multiple slide images
-
-        Args:
-            prompts: Image prompt list
-            resolution: Resolution
-            style: Style
-
-        Returns:
-            Image base64 data list
-        """
-        images = []
-        for i, prompt in enumerate(prompts):
-            print(f"Generating slide {i+1}/{len(prompts)}...")
-            try:
-                image_result = self.generate_image(prompt, resolution=resolution, style=style)
-                images.append(image_result)
-            except Exception as e:
-                print(f"Slide {i+1} failed: {str(e)}")
-                images.append(None)
-
-        return images
+            print(f"[GEMINI] Image generation failed: {str(e)}")
+            return None
 

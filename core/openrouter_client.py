@@ -8,11 +8,12 @@ import base64
 from typing import Optional, List
 from openai import OpenAI
 
+from core.base_client import BaseImageClient
 from core.config import ModelConfig, ResolutionConfig, GenerationConfig
 from core.prompt_builder import ImagePromptBuilder
 
 
-class OpenRouterClient:
+class OpenRouterClient(BaseImageClient):
     """OpenRouter API Client for PPT image generation (3rd fallback)"""
 
     def __init__(self, api_key: Optional[str] = None):
@@ -22,6 +23,7 @@ class OpenRouterClient:
         Args:
             api_key: OpenRouter API key, read from env var if not provided
         """
+        super().__init__(api_key)
         self.api_key = api_key or os.getenv('OPENROUTER_API_KEY')
         if not self.api_key:
             print("[OPENROUTER] OPENROUTER_API_KEY not set, OpenRouter features will be disabled")
@@ -40,16 +42,20 @@ class OpenRouterClient:
     def generate_image(
         self,
         prompt: str,
-        model: str = None,
-        size: str = None
+        aspect_ratio: str = GenerationConfig.DEFAULT_ASPECT_RATIO,
+        resolution: str = GenerationConfig.DEFAULT_RESOLUTION,
+        style: str = GenerationConfig.DEFAULT_STYLE,
+        **kwargs
     ) -> Optional[str]:
         """
         Generate image using OpenRouter
 
         Args:
             prompt: Image generation prompt
-            model: Model ID (defaults to gemini-3-pro-image-preview)
-            size: Image size
+            aspect_ratio: Aspect ratio
+            resolution: Resolution
+            style: Style description
+            **kwargs: Additional arguments (model, size)
 
         Returns:
             Base64 image data, or None if failed
@@ -57,13 +63,10 @@ class OpenRouterClient:
         if not self.client:
             return None
 
-        if model is None:
-            model = self.model
+        model = kwargs.get('model', self.model)
+        size = kwargs.get('size', ResolutionConfig.get_size(aspect_ratio, resolution))
 
-        if size is None:
-            size = ResolutionConfig.DEFAULT_SIZE
-
-        full_prompt = ImagePromptBuilder.build_simple_prompt(prompt)
+        full_prompt = ImagePromptBuilder.build_simple_prompt(prompt, style)
 
         try:
             response = self.client.responses.create(
@@ -87,59 +90,6 @@ class OpenRouterClient:
             print(f"[OPENROUTER] Image generation failed: {str(e)}")
             return None
 
-    def generate_images(
-        self,
-        prompts: List[str],
-        resolution: str = GenerationConfig.DEFAULT_RESOLUTION,
-        style: str = GenerationConfig.DEFAULT_STYLE,
-        aspect_ratio: str = GenerationConfig.DEFAULT_ASPECT_RATIO
-    ) -> List[Optional[str]]:
-        """
-        Batch generate images using OpenRouter
-
-        Args:
-            prompts: Image prompt list
-            resolution: Resolution
-            style: Style
-            aspect_ratio: Aspect ratio
-
-        Returns:
-            Base64 image data list
-        """
-        images = []
-        size = ResolutionConfig.get_size(aspect_ratio, resolution)
-
-        for i, prompt in enumerate(prompts):
-            print(f"[OPENROUTER] Generating slide {i+1}/{len(prompts)}...")
-            try:
-                # OpenRouter uses chat completions for image gen
-                response = self.client.chat.completions.create(
-                    model=self.model,
-                    messages=[
-                        {
-                            "role": "user",
-                            "content": [
-                                {"type": "text", "text": ImagePromptBuilder.build_simple_prompt(prompt, style)}
-                            ]
-                        }
-                    ],
-                    max_tokens=2048
-                )
-
-                # Try to extract image from response
-                image_data = self._extract_image_from_response(response)
-                images.append(image_data)
-
-                if image_data:
-                    print(f"[OPENROUTER] OK Slide {i+1} generated")
-                else:
-                    print(f"[OPENROUTER] FAIL Slide {i+1} - no image in response")
-
-            except Exception as e:
-                print(f"[OPENROUTER] ERROR Slide {i+1}: {str(e)}")
-                images.append(None)
-
-        return images
 
 
     def _extract_image_from_response(self, response) -> Optional[str]:
